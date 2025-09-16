@@ -125,6 +125,40 @@ class Doris(VectorDB):
             with self._get_connection() as (conn, cursor):
                 log.info("Creating table %s with index %s", self.table_name, index_param)
                 metric = index_param.get("metric_fn", "l2_distance")
+
+                # Determine buckets by counting alive backends
+                def _get_alive_be_count(cn):
+                    try:
+                        cur = cn.cursor()  # non-prepared cursor for SHOW statements
+                        cur.execute("SHOW BACKENDS")
+                        rows = cur.fetchall()
+                        col_names = getattr(cur, "column_names", None)
+                        if not col_names and cur.description:
+                            col_names = [d[0] for d in cur.description]
+                        alive_idx = None
+                        if col_names:
+                            for i, n in enumerate(col_names):
+                                if str(n).lower() == "alive":
+                                    alive_idx = i
+                                    break
+                        count = 0
+                        if alive_idx is None:
+                            # Fallback: assume all rows are backends
+                            count = len(rows)
+                        else:
+                            for r in rows:
+                                sval = str(r[alive_idx]).strip().lower()
+                                if sval in ("true", "1", "yes", "y"):
+                                    count += 1
+                        cur.close()
+                        return max(1, count)
+                    except Exception as e:
+                        log.warning("SHOW BACKENDS failed, fallback to 1 bucket: %s", e)
+                        return 1
+
+                buckets = _get_alive_be_count(conn)
+                log.info("Using %d BUCKETS according to alive backends", buckets)
+
                 # Compose index properties
                 idx_props = {
                     "index_type": "hnsw",
@@ -149,7 +183,7 @@ class Doris(VectorDB):
                         INDEX idx_emb (`embedding`) USING ANN PROPERTIES(
                             {idx_props_str}))
                         DUPLICATE KEY(`id`)
-                        DISTRIBUTED BY HASH(`id`) BUCKETS 1
+                        DISTRIBUTED BY HASH(`id`) BUCKETS {buckets}
                         PROPERTIES (
                             "replication_num" = "1"
                         );
