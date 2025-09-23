@@ -301,7 +301,11 @@ class Doris(VectorDB):
         - Batch by config.NUM_PER_BATCH to avoid exceeding MAX_ALLOWED_PACKET (default 64MB).
         - Number of workers equals number of batches: ceil(num_rows / batch_size).
         """
-        batch_size = config.NUM_PER_BATCH
+        batch_size = (
+            int(self.case_config.stream_load_rows_per_batch)
+            if getattr(self.case_config, "stream_load_rows_per_batch", None)
+            else config.NUM_PER_BATCH
+        )
         workers = max(1, math.ceil(len(embeddings) / batch_size))
         log.info(
             f"Insert {len(embeddings)} embeddings with batch size {batch_size}, workers {workers}"

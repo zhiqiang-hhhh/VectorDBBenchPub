@@ -41,6 +41,8 @@ class DorisCaseConfig(BaseModel, DBCaseConfig):
     # Arbitrary index properties and session variables
     index_properties: Dict[str, str] | None = None
     session_vars: Dict[str, str] | None = None
+    # Control rows per single stream load request
+    stream_load_rows_per_batch: Optional[int] = None
 
     def get_metric_fn(self) -> str:
         if self.metric_type == MetricType.L2:

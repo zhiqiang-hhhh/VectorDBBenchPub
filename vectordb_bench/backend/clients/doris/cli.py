@@ -127,6 +127,15 @@ class DorisTypedDict(CommonTypedDict, HNSWBaseTypedDict):
             callback=_parse_kv_list,
         ),
     ]
+    stream_load_rows_per_batch: Annotated[
+        int | None,
+        click.option(
+            "--stream-load-rows-per-batch",
+            type=int,
+            required=False,
+            help="Rows per single stream load request; default uses NUM_PER_BATCH",
+        ),
+    ]
 
 
 @cli.command()
@@ -161,7 +170,8 @@ def Doris(
         # metric_type should come from the dataset; Assembler will set it on the case config.
         db_case_config=DorisCaseConfig(
             index_properties=index_properties,
-            session_vars=session_vars
+            session_vars=session_vars,
+            stream_load_rows_per_batch=parameters.get("stream_load_rows_per_batch"),
         ),
         **parameters,
     )
