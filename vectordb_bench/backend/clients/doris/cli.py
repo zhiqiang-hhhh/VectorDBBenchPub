@@ -136,6 +136,16 @@ class DorisTypedDict(CommonTypedDict, HNSWBaseTypedDict):
             help="Rows per single stream load request; default uses NUM_PER_BATCH",
         ),
     ]
+    no_index: Annotated[
+        bool,
+        click.option(
+            "--no-index",
+            is_flag=True,
+            default=False,
+            show_default=True,
+            help="Create table without ANN index",
+        ),
+    ]
 
 
 @cli.command()
@@ -149,9 +159,9 @@ def Doris(
     index_properties: dict[str, str] = {}
     index_properties.update(parameters.get("index_prop", {}) or {})
     if parameters.get("m") is not None:
-        index_properties.setdefault("M", str(parameters["m"]))
+        index_properties.setdefault("max_degree", str(parameters["m"]))
     if parameters.get("ef_construction") is not None:
-        index_properties.setdefault("efConstruction", str(parameters["ef_construction"]))
+        index_properties.setdefault("ef_construction", str(parameters["ef_construction"]))
 
     session_vars: dict[str, str] = parameters.get("session_var", {}) or {}
 
@@ -172,6 +182,7 @@ def Doris(
             index_properties=index_properties,
             session_vars=session_vars,
             stream_load_rows_per_batch=parameters.get("stream_load_rows_per_batch"),
+            no_index=parameters.get("no_index", False),
         ),
         **parameters,
     )

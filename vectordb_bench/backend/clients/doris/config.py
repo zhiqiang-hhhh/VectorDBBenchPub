@@ -43,6 +43,8 @@ class DorisCaseConfig(BaseModel, DBCaseConfig):
     session_vars: Dict[str, str] | None = None
     # Control rows per single stream load request
     stream_load_rows_per_batch: Optional[int] = None
+    # Create table without ANN index
+    no_index: bool = False
 
     def get_metric_fn(self) -> str:
         if self.metric_type == MetricType.L2:

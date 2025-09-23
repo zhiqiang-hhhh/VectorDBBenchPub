@@ -75,7 +75,7 @@ class Doris(VectorDB):
             # Use prepared cursor to enable server-side prepared statements
             cursor = conn.cursor(prepared=True)
             # Apply session variables (defaults + user-provided)
-            default_session = {"parallel_pipeline_task_num": "1"}
+            default_session = {"parallel_pipeline_task_num": "1", "enable_profile": "false"}
             user_session = {}
             try:
                 user_session = self.case_config.session_param() if hasattr(self.case_config, "session_param") else {}
@@ -121,9 +121,12 @@ class Doris(VectorDB):
 
     def _create_table(self):
         try:
-            index_param = self.case_config.index_param()
+            index_param = self.case_config.index_param() if not getattr(self.case_config, "no_index", False) else {}
             with self._get_connection() as (conn, cursor):
-                log.info("Creating table %s with index %s", self.table_name, index_param)
+                if getattr(self.case_config, "no_index", False):
+                    log.info("Creating table %s without ANN index", self.table_name)
+                else:
+                    log.info("Creating table %s with index %s", self.table_name, index_param)
                 metric = index_param.get("metric_fn", "l2_distance")
 
                 # Determine buckets by counting alive backends
@@ -159,35 +162,41 @@ class Doris(VectorDB):
                 buckets = _get_alive_be_count(conn)
                 log.info("Using %d BUCKETS according to alive backends", buckets)
 
-                # Compose index properties
-                idx_props = {
-                    "index_type": "hnsw",
-                    "metric_type": str(metric),
-                    "dim": str(self.dim),
-                    "ef_construction": str(index_param.get("ef_construction", 40)),
-                    "max_degree": str(index_param.get("max_degree", 32)),
-                }
-                # Merge additional user properties except internal helper keys
-                for k, v in index_param.items():
-                    if k in {"metric_fn"}:
-                        continue
-                    if v is None:
-                        continue
-                    idx_props[str(k)] = str(v)
-                idx_props_str = ",\n\t\t\t\t".join([f'"{k}"="{v}"' for k, v in idx_props.items()])
+                ddl_index = ""
+                if not getattr(self.case_config, "no_index", False):
+                    # Compose index properties
+                    idx_props = {
+                        "index_type": "hnsw",
+                        "metric_type": str(metric),
+                        "dim": str(self.dim),
+                        "ef_construction": str(index_param.get("ef_construction", 40)),
+                        "max_degree": str(index_param.get("max_degree", 32)),
+                    }
+                    # Merge additional user properties except internal helper keys
+                    for k, v in index_param.items():
+                        if k in {"metric_fn"}:
+                            continue
+                        if v is None:
+                            continue
+                        idx_props[str(k)] = str(v)
+                    idx_props_str = ",\n\t\t\t\t".join([f'"{k}"="{v}"' for k, v in idx_props.items()])
+                    ddl_index = f"""
+                        ,
+                        INDEX idx_emb (`embedding`) USING ANN PROPERTIES(
+                            {idx_props_str})
+                    """
 
                 ddl = f"""
                     CREATE TABLE {self.table_name} (
                         id BIGINT NOT NULL,
-                        embedding ARRAY<FLOAT> NOT NULL,
-                        INDEX idx_emb (`embedding`) USING ANN PROPERTIES(
-                            {idx_props_str}))
-                        DUPLICATE KEY(`id`)
-                        DISTRIBUTED BY HASH(`id`) BUCKETS {buckets}
-                        PROPERTIES (
-                            "replication_num" = "1"
-                        );
-                        """
+                        embedding ARRAY<FLOAT> NOT NULL{ddl_index}
+                    )
+                    DUPLICATE KEY(`id`)
+                    DISTRIBUTED BY HASH(`id`) BUCKETS {buckets}
+                    PROPERTIES (
+                        "replication_num" = "1"
+                    );
+                    """
                 log.info("Create table DDL: %s", ddl)
                 cursor.execute(ddl)
                 conn.commit()
