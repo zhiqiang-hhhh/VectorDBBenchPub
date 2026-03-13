@@ -180,18 +180,33 @@ class Doris(VectorDB):
             else:
                 not_applied[key] = value
 
-        # Keep unmapped params in properties so Doris can still receive them in DDL.
-        # This is required for options like nlist on ivf/ivf_on_disk.
-        if not_applied and hasattr(index_options, "properties"):
-            try:
-                existing = getattr(index_options, "properties", None)
-                merged_props = dict(existing) if isinstance(existing, dict) else {}
-                merged_props.update({str(k): str(v) for k, v in not_applied.items()})
-                index_options.properties = merged_props
-                applied["properties"] = merged_props
-                not_applied = {}
-            except Exception:
-                log.debug("Failed to set index_options.properties, keep not_applied props as-is", exc_info=True)
+        # SDK's to_ann_properties does not auto-emit nlist for ivf_on_disk.
+        # Ensure nlist is forwarded through ANN passthrough properties.
+        ann_props_to_apply: dict[str, str] = {str(k): str(v) for k, v in not_applied.items()}
+        if str(index_param.get("index_type", "")).lower() == "ivf_on_disk" and "nlist" in index_param:
+            ann_props_to_apply.setdefault("nlist", str(index_param["nlist"]))
+
+        if ann_props_to_apply:
+            applied_ann_key = None
+            for ann_key in ("ann_properties", "properties"):
+                if not hasattr(index_options, ann_key):
+                    continue
+                try:
+                    existing = getattr(index_options, ann_key, None)
+                    merged_props = dict(existing) if isinstance(existing, dict) else {}
+                    merged_props.update(ann_props_to_apply)
+                    setattr(index_options, ann_key, merged_props)
+                    applied[ann_key] = merged_props
+                    applied_ann_key = ann_key
+                    not_applied = {}
+                    break
+                except Exception:
+                    log.debug("Failed to set index_options.%s", ann_key, exc_info=True)
+            if applied_ann_key is None:
+                log.warning(
+                    "Unable to attach ANN passthrough properties on IndexOptions: %s",
+                    ann_props_to_apply,
+                )
 
         log.info(
             "Index options prepared: applied_props=%s not_applied_props=%s",
@@ -223,17 +238,20 @@ class Doris(VectorDB):
                     self.table.index_options.metric_type = "inner_product"
                 else:
                     self.table.index_options.metric_type = "l2_distance"
-                if (
-                    index_options
-                    and hasattr(index_options, "properties")
-                    and isinstance(index_options.properties, dict)
-                ):
-                    for key, value in index_options.properties.items():
-                        if hasattr(self.table.index_options, key):
-                            try:
-                                setattr(self.table.index_options, key, value)
-                            except Exception:
-                                log.debug("Skip setting index_options.%s at runtime", key)
+                if index_options:
+                    runtime_props = None
+                    if hasattr(index_options, "ann_properties") and isinstance(index_options.ann_properties, dict):
+                        runtime_props = index_options.ann_properties
+                    elif hasattr(index_options, "properties") and isinstance(index_options.properties, dict):
+                        runtime_props = index_options.properties
+
+                    if runtime_props:
+                        for key, value in runtime_props.items():
+                            if hasattr(self.table.index_options, key):
+                                try:
+                                    setattr(self.table.index_options, key, value)
+                                except Exception:
+                                    log.debug("Skip setting index_options.%s at runtime", key)
         except Exception:
             log.exception("Failed to adjust index options for table: %s", self.table_name)
 
