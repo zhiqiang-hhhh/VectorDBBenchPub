@@ -64,30 +64,33 @@ class DorisCaseConfig(BaseModel, DBCaseConfig):
         metric_type = self.get_metric_fn()
         if metric_type.endswith("_approximate"):
             metric_type = metric_type[: -len("_approximate")]
-        props = {"metric_type": metric_type}
+        props: dict[str, str] = {"metric_type": metric_type}
+
+        # Merge user provided index_properties first; explicit fields below take precedence.
+        if self.index_properties:
+            props.update({str(k): str(v) for k, v in self.index_properties.items()})
 
         if self.index_type is not None:
-            props.setdefault("index_type", self.index_type)
+            props["index_type"] = self.index_type
         else:
             props.setdefault("index_type", "hnsw")
 
-        # Merge optional HNSW params
-        props["index_type"] = str.lower(props["index_type"])
-        if props["index_type"] == "hnsw":
+        index_type = str(props["index_type"]).lower()
+        props["index_type"] = index_type
+        if index_type == "hnsw":
             if self.m is not None:
                 props.setdefault("max_degree", str(self.m))
             if self.ef_construction is not None:
                 props.setdefault("ef_construction", str(self.ef_construction))
-        elif props["index_type"] == "ivf":
+        elif index_type in {"ivf", "ivf_on_disk"}:
             if self.nlist is not None:
                 props.setdefault("nlist", str(self.nlist))
+            if "nlist" not in props or not str(props["nlist"]).strip():
+                msg = "nlist of ann index must be specified for ivf/ivf_on_disk type"
+                raise ValueError(msg)
         else:
             msg = f"Unsupported index type: {props['index_type']}"
             raise ValueError(msg)
-
-        # Merge user provided index_properties
-        if self.index_properties:
-            props.update(self.index_properties)
         return props
 
     def search_param(self) -> dict:

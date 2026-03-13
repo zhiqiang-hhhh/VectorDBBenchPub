@@ -180,6 +180,19 @@ class Doris(VectorDB):
             else:
                 not_applied[key] = value
 
+        # Keep unmapped params in properties so Doris can still receive them in DDL.
+        # This is required for options like nlist on ivf/ivf_on_disk.
+        if not_applied and hasattr(index_options, "properties"):
+            try:
+                existing = getattr(index_options, "properties", None)
+                merged_props = dict(existing) if isinstance(existing, dict) else {}
+                merged_props.update({str(k): str(v) for k, v in not_applied.items()})
+                index_options.properties = merged_props
+                applied["properties"] = merged_props
+                not_applied = {}
+            except Exception:
+                log.debug("Failed to set index_options.properties, keep not_applied props as-is", exc_info=True)
+
         log.info(
             "Index options prepared: applied_props=%s not_applied_props=%s",
             applied,
